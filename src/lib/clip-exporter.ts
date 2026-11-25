@@ -348,6 +348,8 @@ export async function renderAndDownloadClip({
 
   onProgress?.(4, "Connecting video stream...");
 
+  let adaptiveAudioUrl: string | null = null;
+
   // Probe YouTube stream first so failures report exact, clear errors quickly
   if (!clip.videoUrl && clip.youtubeVideoId) {
     const probeRes = await fetch(
@@ -365,14 +367,31 @@ export async function renderAndDownloadClip({
       audioCtx?.close().catch(() => undefined);
       throw new Error(reason);
     }
+    try {
+      const probeData = (await probeRes.json()) as { mode?: string };
+      if (probeData.mode === "adaptive") {
+        adaptiveAudioUrl = `/api/youtube-stream?videoId=${encodeURIComponent(clip.youtubeVideoId)}&kind=audio`;
+      }
+    } catch {
+      // Ignore optional probe parse error
+    }
   }
 
   const video = document.createElement("video");
   video.crossOrigin = "anonymous";
   video.preload = "auto";
   video.playsInline = true;
-  video.muted = false;
+  video.muted = Boolean(adaptiveAudioUrl);
   video.volume = 1;
+
+  let separateAudio: HTMLAudioElement | null = null;
+  if (adaptiveAudioUrl) {
+    separateAudio = new Audio();
+    separateAudio.crossOrigin = "anonymous";
+    separateAudio.preload = "auto";
+    separateAudio.muted = false;
+    separateAudio.volume = 1;
+  }
 
   let mediaStream: MediaStream | null = null;
   let recorder: MediaRecorder | null = null;
@@ -380,18 +399,28 @@ export async function renderAndDownloadClip({
 
   try {
     if (audioCtx && audioDest) {
-      const sourceNode = audioCtx.createMediaElementSource(video);
-      // Route video audio into MediaRecorder destination only (silent export)
+      const mediaSourceTarget = separateAudio ?? video;
+      const sourceNode = audioCtx.createMediaElementSource(mediaSourceTarget);
+      // Route video/audio track into MediaRecorder destination only (silent export)
       sourceNode.connect(audioDest);
     }
 
     onProgress?.(10, "Loading video frames...");
     video.src = sourceUrl;
     video.load();
-
-    if (video.readyState < 1) {
-      await waitForEvent(video, "loadedmetadata", 25_000, signal);
+    if (separateAudio && adaptiveAudioUrl) {
+      separateAudio.src = adaptiveAudioUrl;
+      separateAudio.load();
     }
+
+    await Promise.all([
+      video.readyState < 1
+        ? waitForEvent(video, "loadedmetadata", 25_000, signal)
+        : Promise.resolve(),
+      separateAudio && separateAudio.readyState < 1
+        ? waitForEvent(separateAudio, "loadedmetadata", 25_000, signal)
+        : Promise.resolve(),
+    ]);
 
     const totalMediaDur =
       Number.isFinite(video.duration) && video.duration > 0
@@ -410,12 +439,25 @@ export async function renderAndDownloadClip({
     if (safeStart > 0.05) {
       onProgress?.(15, "Seeking to hook timestamp...");
       video.currentTime = safeStart;
-      await waitForEvent(video, "seeked", 25_000, signal);
+      if (separateAudio) {
+        separateAudio.currentTime = safeStart;
+      }
+      await Promise.all([
+        waitForEvent(video, "seeked", 25_000, signal),
+        separateAudio
+          ? waitForEvent(separateAudio, "seeked", 25_000, signal)
+          : Promise.resolve(),
+      ]);
     }
 
-    if (video.readyState < 3) {
-      await waitForEvent(video, "canplay", 25_000, signal);
-    }
+    await Promise.all([
+      video.readyState < 3
+        ? waitForEvent(video, "canplay", 25_000, signal)
+        : Promise.resolve(),
+      separateAudio && separateAudio.readyState < 3
+        ? waitForEvent(separateAudio, "canplay", 25_000, signal)
+        : Promise.resolve(),
+    ]);
 
     const width = 720;
     const height = aspectRatio === "9:16" ? 1280 : 720;
@@ -472,7 +514,10 @@ export async function renderAndDownloadClip({
     }
 
     recorder.start(250);
-    await video.play();
+    await Promise.all([
+      video.play(),
+      separateAudio ? separateAudio.play() : Promise.resolve(),
+    ]);
     onProgress?.(20, "Rendering short...");
 
     await new Promise<void>((resolvePlayback, rejectPlayback) => {
@@ -509,6 +554,14 @@ export async function renderAndDownloadClip({
       const renderFrame = () => {
         if (settled) return;
 
+        if (
+          separateAudio &&
+          !separateAudio.paused &&
+          Math.abs(separateAudio.currentTime - video.currentTime) > 0.22
+        ) {
+          separateAudio.currentTime = video.currentTime;
+        }
+
         const nowTime = video.currentTime;
         const relTime = Math.max(0, nowTime - safeStart);
 
@@ -538,6 +591,7 @@ export async function renderAndDownloadClip({
     });
 
     video.pause();
+    separateAudio?.pause();
     if (recorder.state === "recording") {
       recorder.stop();
     }
@@ -572,6 +626,11 @@ export async function renderAndDownloadClip({
     video.pause();
     video.removeAttribute("src");
     video.load();
+    if (separateAudio) {
+      separateAudio.pause();
+      separateAudio.removeAttribute("src");
+      separateAudio.load();
+    }
     if (recorder && recorder.state === "recording") {
       try {
         recorder.stop();
