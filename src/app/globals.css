@@ -1,0 +1,144 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  accent-color: #10b981;
+  --bg-obsidian: #0d1117;
+  --bg-navy: #131b2e;
+  --surface-card: #161f33;
+  --border-subtle: #26324d;
+  --emerald: #10b981;
+  --emerald-bright: #34d399;
+  --blurple: #5865f2;
+  --scrollbar-track: #0d1117;
+  --scrollbar-thumb: #2d3b59;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+@supports not (scrollbar-color: auto) {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 9999px;
+    border: 2px solid var(--scrollbar-track);
+  }
+}
+
+html,
+body {
+  min-height: 100%;
+  background-color: #0d1117;
+  color: #f8fafc;
+}
+
+body {
+  background-image:
+    radial-gradient(ellipse 80% 55% at 50% -10%, rgba(19, 27, 46, 0.95) 0%, rgba(13, 17, 23, 0) 70%),
+    radial-gradient(circle at 85% 20%, rgba(139, 92, 246, 0.08) 0%, transparent 40%),
+    radial-gradient(circle at 15% 80%, rgba(16, 185, 129, 0.06) 0%, transparent 45%),
+    linear-gradient(180deg, #0d1117 0%, #131b2e 100%);
+  background-attachment: fixed;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+/* Signature ClipSon-inspired card surface with top gradient accent bar */
+.cf-card {
+  position: relative;
+  background-color: #161f33;
+  border: 1px solid #26324d;
+  border-radius: 1rem;
+  box-shadow:
+    0 24px 60px -15px rgba(2, 6, 23, 0.75),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.cf-card-accent {
+  position: relative;
+  overflow: hidden;
+}
+
+.cf-card-accent::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg, #8b5cf6 0%, #3b82f6 50%, #10b981 100%);
+  z-index: 10;
+  pointer-events: none;
+}
+
+/* Accessible focus ring */
+:where(a:any-link, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid #34d399;
+  outline-offset: 2px;
+}
+
+/* Visually hidden utility (stays reachable when focused, e.g. skip links) */
+.visually-hidden:where(:not(:focus-within, :active)) {
+  position: absolute !important;
+  clip-path: inset(50%) !important;
+  overflow: hidden !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  border: 0 !important;
+  white-space: nowrap !important;
+}
+
+/* Custom styled native <progress> bar per modern-web-guidance */
+.cf-progress {
+  appearance: none;
+  border: 0 solid;
+  overflow: clip;
+  width: 100%;
+  height: 10px;
+  border-radius: 9999px;
+  background: #0d1117;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.45);
+  container-type: inline-size;
+}
+
+.cf-progress::-webkit-progress-bar {
+  background: transparent;
+}
+
+.cf-progress::-webkit-progress-value {
+  background: linear-gradient(90deg, #8b5cf6 0%, #3b82f6 45%, #10b981 100%);
+  border-radius: 9999px;
+  transition: inline-size 0.35s ease;
+}
+
+.cf-progress::-moz-progress-bar {
+  background: linear-gradient(90deg, #8b5cf6 0%, #3b82f6 45%, #10b981 100%);
+  border-radius: 9999px;
+  transition: inline-size 0.35s ease;
+}
+
+/* Native HTML switch progressive styling */
+.cf-switch {
+  accent-color: #10b981;
+}
+
+/* Windows High Contrast / Forced Colors fallback */
+@media (forced-colors: active) {
+  .cf-card,
+  .cf-card-accent {
+    border: 1px solid CanvasText;
+  }
+
+  .cf-card-accent::before {
+    background: Highlight;
+    forced-color-adjust: none;
+  }
+}
