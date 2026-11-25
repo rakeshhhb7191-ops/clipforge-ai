@@ -106,7 +106,15 @@ export function VerticalClipPlayer({
   const ytPlayerRef = useRef<YTPlayerInstance | null>(null);
   const ytMountId = useId().replace(/:/g, "-");
 
-  const useYouTubeMode = Boolean(clip.youtubeVideoId && !clip.videoUrl && !ytEmbedBlocked);
+  const effectiveVideoUrl =
+    clip.videoUrl ??
+    (ytEmbedBlocked && clip.youtubeVideoId
+      ? `/api/youtube-stream?videoId=${encodeURIComponent(clip.youtubeVideoId)}`
+      : null);
+
+  const useYouTubeMode = Boolean(
+    clip.youtubeVideoId && !effectiveVideoUrl && !ytEmbedBlocked
+  );
 
   useEffect(() => {
     setShowFaceHud(autoFaceTracking);
@@ -213,16 +221,16 @@ export function VerticalClipPlayer({
 
   // Handle local uploaded/MP4 video segment bounds
   useEffect(() => {
-    if (!clip.videoUrl || !videoRef.current) return;
+    if (!effectiveVideoUrl || !videoRef.current) return;
     const vid = videoRef.current;
     if (clip.startTime > 0 && Math.abs(vid.currentTime - clip.startTime) > clip.duration + 1) {
       vid.currentTime = clip.startTime;
     }
-  }, [clip.videoUrl, clip.startTime, clip.duration]);
+  }, [effectiveVideoUrl, clip.startTime, clip.duration]);
 
   // Simulated 60fps playback timer for thumbnail/demo fallback mode
   useEffect(() => {
-    if (clip.videoUrl || useYouTubeMode || !isPlaying) return;
+    if (effectiveVideoUrl || useYouTubeMode || !isPlaying) return;
 
     let rafId = 0;
     let lastTs = performance.now();
@@ -239,10 +247,10 @@ export function VerticalClipPlayer({
 
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [clip.duration, clip.videoUrl, useYouTubeMode, isPlaying]);
+  }, [clip.duration, effectiveVideoUrl, useYouTubeMode, isPlaying]);
 
   const togglePlay = () => {
-    if (clip.videoUrl && videoRef.current) {
+    if (effectiveVideoUrl && videoRef.current) {
       if (videoRef.current.paused) {
         if (videoRef.current.currentTime < clip.startTime || videoRef.current.currentTime >= clip.endTime) {
           videoRef.current.currentTime = clip.startTime;
@@ -279,7 +287,7 @@ export function VerticalClipPlayer({
 
   const handleSeek = (nextRelTime: number) => {
     setCurrentTime(nextRelTime);
-    if (clip.videoUrl && videoRef.current) {
+    if (effectiveVideoUrl && videoRef.current) {
       videoRef.current.currentTime = clip.startTime + nextRelTime;
     } else if (useYouTubeMode && ytPlayerRef.current && ytReady) {
       ytPlayerRef.current.seekTo(clip.startTime + nextRelTime, true);
@@ -352,14 +360,19 @@ export function VerticalClipPlayer({
             : "aspect-square max-w-[300px]"
         }`}
       >
-        {/* 1. Local MP4 / Uploaded Video */}
-        {clip.videoUrl ? (
+        {/* 1. Local MP4 / Uploaded Video or Fallback YouTube Stream */}
+        {effectiveVideoUrl ? (
           <video
             ref={videoRef}
-            src={clip.videoUrl}
+            src={effectiveVideoUrl}
             muted={isMuted}
             playsInline
             style={{ objectPosition: `${50 + cropPanX * 0.6}% center` }}
+            onLoadedMetadata={(e) => {
+              if (clip.startTime > 0) {
+                e.currentTarget.currentTime = clip.startTime;
+              }
+            }}
             onTimeUpdate={(e) => {
               const abs = e.currentTarget.currentTime;
               if (clip.endTime > 0 && abs >= clip.endTime) {
@@ -619,4 +632,4 @@ export function VerticalClipPlayer({
       )}
     </div>
   );
-}
+                  }
