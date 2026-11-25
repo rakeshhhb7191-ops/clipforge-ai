@@ -190,6 +190,12 @@ async function resolveYouTubeStream(
     }
   }
 
+  if (/not a bot|sign in|login_required/i.test(lastReason)) {
+    throw new Error(
+      "YouTube blocked direct stream download from this cloud server IP. Attach a local MP4/MOV file below to export this short with burned-in captions, or run ClipForge locally."
+    );
+  }
+
   throw new Error(lastReason);
 }
 
