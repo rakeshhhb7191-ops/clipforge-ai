@@ -13,6 +13,7 @@ import {
   MoveHorizontal,
   Sparkles,
   Type,
+  UploadCloud,
   X,
 } from "lucide-react";
 import {
@@ -59,6 +60,19 @@ export function ClipCard({
   const transcriptId = useId();
   const styleSelectId = useId();
   const cropPanId = useId();
+  const attachVideoId = useId();
+
+  const handleAttachVideoFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const objectUrl = URL.createObjectURL(file);
+    setExportError(null);
+    onUpdateClip({
+      ...clip,
+      videoUrl: objectUrl,
+    });
+    onNotify(`Attached "${file.name}" — ready to export with synced captions!`);
+  };
 
   const handleTranscriptChange = (nextText: string) => {
     const nextWords = buildWordTokensFromText(nextText, clip.duration);
@@ -130,7 +144,6 @@ export function ClipCard({
           ? err.message
           : "Failed to export video clip. Please try again.";
       setExportError(message);
-      onNotify(message);
     } finally {
       exportAbortRef.current = null;
       setIsExporting(false);
@@ -348,10 +361,30 @@ export function ClipCard({
           {exportError && (
             <div
               role="alert"
-              className="mb-3 flex items-start gap-2 rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-200"
+              className="mb-3 space-y-2 rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2.5 text-xs text-red-200"
             >
-              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-400" aria-hidden="true" />
-              <span>{exportError}</span>
+              <div className="flex items-start gap-2">
+                <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-400" aria-hidden="true" />
+                <span>{exportError}</span>
+              </div>
+              {!clip.videoUrl && (
+                <div>
+                  <input
+                    id={attachVideoId}
+                    type="file"
+                    accept=".mp4,.mov,.webm,.mkv,video/mp4,video/quicktime,video/webm"
+                    onChange={handleAttachVideoFile}
+                    className="visually-hidden"
+                  />
+                  <label
+                    htmlFor={attachVideoId}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#10B981]/50 bg-[#10B981]/15 px-2.5 py-1 text-[11px] font-semibold text-[#34D399] transition hover:bg-[#10B981]/25"
+                  >
+                    <UploadCloud className="h-3.5 w-3.5" aria-hidden="true" />
+                    Attach Local MP4 / MOV File to Export
+                  </label>
+                </div>
+              )}
             </div>
           )}
 
@@ -401,4 +434,4 @@ export function ClipCard({
       </div>
     </motion.article>
   );
-                    }
+  }
