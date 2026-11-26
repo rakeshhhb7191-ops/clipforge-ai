@@ -22,6 +22,8 @@ function pickSupportedRecorderFormat(): {
   }
 
   const candidates: Array<{ mimeType: string; extension: "mp4" | "webm" }> = [
+    { mimeType: "video/mp4;codecs=avc1.64002A,mp4a.40.2", extension: "mp4" },
+    { mimeType: "video/mp4;codecs=avc1.4D4028,mp4a.40.2", extension: "mp4" },
     { mimeType: "video/mp4;codecs=avc1.42E01E,mp4a.40.2", extension: "mp4" },
     { mimeType: "video/mp4;codecs=avc1.4D401F,mp4a.40.2", extension: "mp4" },
     { mimeType: "video/mp4", extension: "mp4" },
@@ -121,7 +123,12 @@ function drawCroppedVideoFrame(
     sy = Math.max(0, (vh - sh) / 2);
   }
 
+  ctx.save();
+  if (vw < 1080) {
+    ctx.filter = "contrast(1.05) saturate(1.06)";
+  }
   ctx.drawImage(video, sx, sy, sw, sh, 0, 0, targetW, targetH);
+  ctx.restore();
 }
 
 function drawCaptionsOverlay(
@@ -141,12 +148,12 @@ function drawCaptionsOverlay(
       ? height * 0.5
       : height * 0.8;
 
-  const maxLineWidth = width - 72;
+  const maxLineWidth = width - 108;
   const isHormozi = clip.captionStyle === "hormozi";
   const isMinimal = clip.captionStyle === "minimal";
   const isKaraoke = clip.captionStyle === "karaoke";
 
-  let fontSize = isHormozi ? 52 : isKaraoke ? 42 : 34;
+  let fontSize = isHormozi ? 76 : isKaraoke ? 62 : 50;
   const fontFamily =
     '"Plus Jakarta Sans", "Inter", system-ui, -apple-system, sans-serif';
 
@@ -154,10 +161,10 @@ function drawCaptionsOverlay(
     isHormozi ? w.word.toUpperCase() : w.word
   );
 
-  const gap = isKaraoke ? 22 : 18;
+  const gap = isKaraoke ? 32 : 26;
 
   // Shrink font size automatically if a long 3-word phrase exceeds width
-  while (fontSize > 22) {
+  while (fontSize > 34) {
     ctx.font = `800 ${fontSize}px ${fontFamily}`;
     const totalTextWidth =
       displayWords.reduce((acc, word, idx) => {
@@ -166,7 +173,7 @@ function drawCaptionsOverlay(
       }, 0) +
       Math.max(0, displayWords.length - 1) * gap;
     if (totalTextWidth <= maxLineWidth) break;
-    fontSize -= 3;
+    fontSize -= 4;
   }
 
   ctx.save();
@@ -183,21 +190,21 @@ function drawCaptionsOverlay(
     Math.max(0, displayWords.length - 1) * gap;
 
   if (isMinimal || isKaraoke) {
-    const padX = 24;
-    const pillH = fontSize + 28;
-    const pillW = Math.min(width - 36, totalWidth + padX * 2);
+    const padX = 36;
+    const pillH = fontSize + 40;
+    const pillW = Math.min(width - 54, totalWidth + padX * 2);
     const pillX = (width - pillW) / 2;
     const pillY = yCenter - pillH / 2;
 
     ctx.fillStyle = isMinimal
-      ? "rgba(13, 17, 23, 0.85)"
-      : "rgba(13, 17, 23, 0.78)";
-    drawRoundedRect(ctx, pillX, pillY, pillW, pillH, 16);
+      ? "rgba(13, 17, 23, 0.86)"
+      : "rgba(13, 17, 23, 0.80)";
+    drawRoundedRect(ctx, pillX, pillY, pillW, pillH, 24);
     ctx.fill();
 
     if (isMinimal) {
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.14)";
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.16)";
+      ctx.lineWidth = 3;
       ctx.stroke();
     }
   }
@@ -210,8 +217,8 @@ function drawCaptionsOverlay(
     const isActive = i === activeIndex;
 
     if (isKaraoke && isActive) {
-      const boxPadX = 10;
-      const boxH = fontSize + 14;
+      const boxPadX = 14;
+      const boxH = fontSize + 20;
       ctx.fillStyle = clip.captionColor;
       drawRoundedRect(
         ctx,
@@ -219,7 +226,7 @@ function drawCaptionsOverlay(
         yCenter - boxH / 2,
         slotWidth + boxPadX * 2,
         boxH,
-        10
+        14
       );
       ctx.fill();
     }
@@ -236,11 +243,11 @@ function drawCaptionsOverlay(
     if (isHormozi) {
       ctx.lineJoin = "round";
       ctx.miterLimit = 2;
-      ctx.lineWidth = Math.max(7, Math.round(fontSize * 0.22));
+      ctx.lineWidth = Math.max(10, Math.round(fontSize * 0.22));
       ctx.strokeStyle = "#000000";
-      ctx.shadowColor = "rgba(0, 0, 0, 0.85)";
-      ctx.shadowBlur = 12;
-      ctx.shadowOffsetY = 4;
+      ctx.shadowColor = "rgba(0, 0, 0, 0.88)";
+      ctx.shadowBlur = 16;
+      ctx.shadowOffsetY = 6;
       ctx.strokeText(word, drawX, yCenter);
       ctx.shadowColor = "transparent";
       ctx.fillStyle = isActive ? clip.captionColor : "#F8FAFC";
@@ -459,16 +466,19 @@ export async function renderAndDownloadClip({
         : Promise.resolve(),
     ]);
 
-    const width = 720;
-    const height = aspectRatio === "9:16" ? 1280 : 720;
+    const width = 1080;
+    const height = aspectRatio === "9:16" ? 1920 : 1080;
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { alpha: false });
 
     if (!ctx || typeof canvas.captureStream !== "function") {
       throw new Error("Canvas video capture is unavailable in this browser.");
     }
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
 
     // Paint the initial real video frame before starting MediaRecorder
     drawCroppedVideoFrame(ctx, video, width, height, clip.cropPanX ?? 0);
@@ -484,8 +494,8 @@ export async function renderAndDownloadClip({
     const { mimeType, extension } = pickSupportedRecorderFormat();
     recorder = new MediaRecorder(mediaStream, {
       mimeType,
-      videoBitsPerSecond: 3_500_000,
-      audioBitsPerSecond: 128_000,
+      videoBitsPerSecond: 10_000_000,
+      audioBitsPerSecond: 192_000,
     });
 
     const chunks: BlobPart[] = [];

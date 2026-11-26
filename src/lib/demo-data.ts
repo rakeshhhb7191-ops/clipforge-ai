@@ -8,14 +8,6 @@ import {
 
 export const SAMPLE_VIDEO_PRESETS: SampleVideoPreset[] = [
   {
-    id: "stanford-commencement",
-    label: "Keynote: Connect the Dots",
-    url: "https://www.youtube.com/watch?v=UF8uR6Z6KLc",
-    title: "Steve Jobs' 2005 Stanford Commencement Address",
-    channel: "Stanford",
-    durationLabel: "15:04",
-  },
-  {
     id: "procrastinator-ted",
     label: "TED: Master Procrastinator",
     url: "https://www.youtube.com/watch?v=arj7oStGLkU",
@@ -30,6 +22,14 @@ export const SAMPLE_VIDEO_PRESETS: SampleVideoPreset[] = [
     title: "Think Fast, Talk Smart: Communication Techniques",
     channel: "Stanford GSB",
     durationLabel: "58:20",
+  },
+  {
+    id: "stanford-commencement",
+    label: "Keynote: Connect the Dots",
+    url: "https://www.youtube.com/watch?v=UF8uR6Z6KLc",
+    title: "Steve Jobs' 2005 Stanford Commencement Address",
+    channel: "Stanford",
+    durationLabel: "15:04",
   },
 ];
 

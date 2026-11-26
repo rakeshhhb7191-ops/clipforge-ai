@@ -1,4 +1,7 @@
+import dns from "node:dns";
 import { WordToken } from "@/types/clipforge";
+
+dns.setDefaultResultOrder("ipv4first");
 
 export interface TranscriptSegment {
   text: string;
