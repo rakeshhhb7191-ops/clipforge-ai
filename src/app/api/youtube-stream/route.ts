@@ -1,4 +1,7 @@
+import dns from "node:dns";
 import { NextRequest, NextResponse } from "next/server";
+
+dns.setDefaultResultOrder("ipv4first");
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -17,7 +20,8 @@ interface StreamCacheEntry {
 }
 
 const STREAM_CACHE = new Map<string, StreamCacheEntry>();
-const MAX_CHUNK_BYTES = 2 * 1024 * 1024; // 2 MB chunks keep Vercel serverless streaming fast & under limits
+const MAX_VIDEO_CHUNK_BYTES = 2 * 1024 * 1024; // 2 MB keeps HD video streaming fast & under limits
+const MAX_AUDIO_CHUNK_BYTES = 1024 * 1024; // 1 MB avoids YouTube audio CDN range-size 403 throttling
 
 interface InnertubeFormat {
   itag?: number;
@@ -113,9 +117,9 @@ function pickBestAdaptivePair(adaptiveFormats: InnertubeFormat[]): {
         );
   if (mp4Videos.length === 0) return null;
 
-  // Prefer <= 720p H.264 for crisp quality without excessive decoding overhead
-  const upTo720 = mp4Videos.filter((f) => (f.height ?? 0) <= 720);
-  const videoPool = upTo720.length > 0 ? upTo720 : mp4Videos;
+  // Prefer up to 1080p H.264 for crisp Full HD exports across all browsers
+  const upTo1080 = mp4Videos.filter((f) => (f.height ?? 0) <= 1080);
+  const videoPool = upTo1080.length > 0 ? upTo1080 : mp4Videos;
   videoPool.sort((a, b) => (b.height ?? 0) - (a.height ?? 0));
   const bestVideo = videoPool[0];
   if (!bestVideo) return null;
@@ -155,11 +159,84 @@ async function probeRangeUrl(
     if (match) contentLength = Number(match[1]);
   }
 
+  const parsedLen =
+    contentLength && Number.isFinite(contentLength) ? contentLength : null;
+
+  // Verify mid-file byte-range seek succeeds so playback never 403s when jumping to clip.startTime
+  if (parsedLen && parsedLen > 2_000_000) {
+    const seekStart = Math.min(parsedLen - 1024, 5_000_000);
+    const seekProbe = await fetch(url, {
+      headers: {
+        Range: `bytes=${seekStart}-${seekStart + 1023}`,
+        "User-Agent": userAgent,
+      },
+      cache: "no-store",
+    });
+    if (!seekProbe.ok && seekProbe.status !== 206) {
+      return { ok: false, status: seekProbe.status, contentLength: parsedLen };
+    }
+  }
+
   return {
     ok: true,
     status: probe.status,
-    contentLength:
-      contentLength && Number.isFinite(contentLength) ? contentLength : null,
+    contentLength: parsedLen,
+  };
+}
+
+async function resolveAdaptiveEntry(
+  adaptive: { video: InnertubeFormat; audio: InnertubeFormat | null },
+  userAgent: string,
+  requireAudio: boolean
+): Promise<{ entry: StreamCacheEntry | null; status: number }> {
+  if (!adaptive.video.url) return { entry: null, status: 404 };
+
+  const videoProbe = await probeRangeUrl(
+    adaptive.video.url,
+    userAgent,
+    adaptive.video.contentLength
+  );
+  if (!videoProbe.ok) {
+    return { entry: null, status: videoProbe.status };
+  }
+
+  let audioUrl: string | null = null;
+  let audioMimeType: string | null = null;
+  let audioContentLength: number | null = null;
+
+  if (adaptive.audio?.url) {
+    const audioProbe = await probeRangeUrl(
+      adaptive.audio.url,
+      userAgent,
+      adaptive.audio.contentLength
+    );
+    if (audioProbe.ok) {
+      audioUrl = adaptive.audio.url;
+      audioMimeType = (adaptive.audio.mimeType ?? "audio/mp4")
+        .split(";")[0]
+        .trim();
+      audioContentLength = audioProbe.contentLength;
+    }
+  }
+
+  if (requireAudio && !audioUrl) {
+    return { entry: null, status: 502 };
+  }
+
+  return {
+    status: 200,
+    entry: {
+      mode: audioUrl ? "adaptive" : "progressive",
+      videoUrl: adaptive.video.url,
+      audioUrl,
+      userAgent,
+      mimeType: (adaptive.video.mimeType ?? "video/mp4").split(";")[0].trim(),
+      audioMimeType,
+      qualityLabel: adaptive.video.qualityLabel ?? "720p",
+      videoContentLength: videoProbe.contentLength,
+      audioContentLength,
+      expiresAt: extractExpireTimestamp(adaptive.video.url),
+    },
   };
 }
 
@@ -219,10 +296,30 @@ async function resolveYouTubeStream(
         lastReason = data.playabilityStatus.reason;
       }
 
-      // 1. Prefer progressive video+audio MP4 format
       const progressive = pickBestProgressiveFormat(
         data.streamingData?.formats ?? []
       );
+      const adaptive = pickBestAdaptivePair(
+        data.streamingData?.adaptiveFormats ?? []
+      );
+
+      // 1. Prefer HD adaptive (>= 720p) over low-res progressive (360p/240p) for crisp clarity
+      const adaptiveHeight = adaptive?.video.height ?? 0;
+      const progressiveHeight = progressive?.height ?? 0;
+
+      if (adaptive && adaptiveHeight >= 720 && adaptiveHeight > progressiveHeight) {
+        const resAdaptive = await resolveAdaptiveEntry(
+          adaptive,
+          client.userAgent,
+          true
+        );
+        if (resAdaptive.entry) {
+          STREAM_CACHE.set(videoId, resAdaptive.entry);
+          return resAdaptive.entry;
+        }
+      }
+
+      // 2. Progressive video+audio MP4 format (single-stream sync)
       if (progressive?.url) {
         const probed = await probeRangeUrl(
           progressive.url,
@@ -250,54 +347,18 @@ async function resolveYouTubeStream(
         lastReason = `Upstream stream rejected request (HTTP ${probed.status}).`;
       }
 
-      // 2. Fallback to adaptive video + audio pair (e.g., IOS client)
-      const adaptive = pickBestAdaptivePair(
-        data.streamingData?.adaptiveFormats ?? []
-      );
-      if (adaptive?.video.url) {
-        const videoProbe = await probeRangeUrl(
-          adaptive.video.url,
+      // 3. Fallback to any adaptive video + audio pair (e.g., IOS client)
+      if (adaptive) {
+        const resAdaptive = await resolveAdaptiveEntry(
+          adaptive,
           client.userAgent,
-          adaptive.video.contentLength
+          false
         );
-        if (videoProbe.ok) {
-          let audioUrl: string | null = null;
-          let audioMimeType: string | null = null;
-          let audioContentLength: number | null = null;
-
-          if (adaptive.audio?.url) {
-            const audioProbe = await probeRangeUrl(
-              adaptive.audio.url,
-              client.userAgent,
-              adaptive.audio.contentLength
-            );
-            if (audioProbe.ok) {
-              audioUrl = adaptive.audio.url;
-              audioMimeType = (adaptive.audio.mimeType ?? "audio/mp4")
-                .split(";")[0]
-                .trim();
-              audioContentLength = audioProbe.contentLength;
-            }
-          }
-
-          const entry: StreamCacheEntry = {
-            mode: audioUrl ? "adaptive" : "progressive",
-            videoUrl: adaptive.video.url,
-            audioUrl,
-            userAgent: client.userAgent,
-            mimeType: (adaptive.video.mimeType ?? "video/mp4")
-              .split(";")[0]
-              .trim(),
-            audioMimeType,
-            qualityLabel: adaptive.video.qualityLabel ?? "720p",
-            videoContentLength: videoProbe.contentLength,
-            audioContentLength,
-            expiresAt: extractExpireTimestamp(adaptive.video.url),
-          };
-          STREAM_CACHE.set(videoId, entry);
-          return entry;
+        if (resAdaptive.entry) {
+          STREAM_CACHE.set(videoId, resAdaptive.entry);
+          return resAdaptive.entry;
         }
-        lastReason = `Upstream stream rejected request (HTTP ${videoProbe.status}).`;
+        lastReason = `Upstream stream rejected request (HTTP ${resAdaptive.status}).`;
       }
     } catch (err) {
       lastReason =
@@ -316,13 +377,14 @@ async function resolveYouTubeStream(
 
 function parseClampedRange(
   rangeHeader: string | null,
-  totalLength: number | null
+  totalLength: number | null,
+  maxChunkBytes: number
 ): string {
   if (!rangeHeader) {
     const end =
       totalLength !== null
-        ? Math.min(MAX_CHUNK_BYTES - 1, totalLength - 1)
-        : MAX_CHUNK_BYTES - 1;
+        ? Math.min(maxChunkBytes - 1, totalLength - 1)
+        : maxChunkBytes - 1;
     return `bytes=0-${Math.max(0, end)}`;
   }
 
@@ -335,8 +397,8 @@ function parseClampedRange(
   const requestedEnd = m[2] ? Number(m[2]) : null;
   let end =
     requestedEnd !== null && !Number.isNaN(requestedEnd)
-      ? Math.min(requestedEnd, start + MAX_CHUNK_BYTES - 1)
-      : start + MAX_CHUNK_BYTES - 1;
+      ? Math.min(requestedEnd, start + maxChunkBytes - 1)
+      : start + maxChunkBytes - 1;
 
   if (totalLength !== null && totalLength > 0) {
     end = Math.min(end, totalLength - 1);
@@ -401,8 +463,14 @@ export async function GET(req: NextRequest) {
       );
     }
 
+    const maxChunk =
+      kind === "audio" ? MAX_AUDIO_CHUNK_BYTES : MAX_VIDEO_CHUNK_BYTES;
     const rangeHeader = req.headers.get("range");
-    const effectiveRange = parseClampedRange(rangeHeader, target.targetLength);
+    const effectiveRange = parseClampedRange(
+      rangeHeader,
+      target.targetLength,
+      maxChunk
+    );
 
     let upstream = await fetch(target.targetUrl, {
       headers: {
@@ -422,7 +490,11 @@ export async function GET(req: NextRequest) {
           { status: 502 }
         );
       }
-      const retryRange = parseClampedRange(rangeHeader, target.targetLength);
+      const retryRange = parseClampedRange(
+        rangeHeader,
+        target.targetLength,
+        maxChunk
+      );
       upstream = await fetch(target.targetUrl, {
         headers: {
           Range: retryRange,
